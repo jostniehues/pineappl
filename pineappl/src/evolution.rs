@@ -109,7 +109,7 @@ impl AlphasTable {
     }
 }
 
-/// Check if the gluon has pdg zero 
+/// Check if the gluon has pdg zero
 pub fn gluon_has_pid_zero(grid: &Grid) -> bool {
     // if there are any PID zero particles ...
     grid.channels()

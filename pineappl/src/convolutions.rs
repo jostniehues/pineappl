@@ -4,10 +4,10 @@ use super::boc::Kinematics;
 use super::boc::Scales;
 use super::grid::Grid;
 use super::pids;
-use super::subgrid::{ self, Subgrid, SubgridEnum };
+use super::subgrid::{self, Subgrid, SubgridEnum};
 use itertools::izip;
 use rustc_hash::FxHashMap;
-use serde::{ Deserialize, Serialize };
+use serde::{Deserialize, Serialize};
 
 const REN_IDX: usize = 0;
 const FAC_IDX: usize = 1;
@@ -35,7 +35,7 @@ impl<'a> ConvolutionCache<'a> {
     pub fn new(
         convolutions: Vec<Conv>,
         xfx: Vec<&'a mut dyn FnMut(i32, f64, f64) -> f64>,
-        alphas: &'a mut dyn FnMut(f64) -> f64
+        alphas: &'a mut dyn FnMut(f64) -> f64,
     ) -> Self {
         Self {
             caches: xfx
@@ -57,7 +57,7 @@ impl<'a> ConvolutionCache<'a> {
     pub(crate) fn new_grid_conv_cache<'b>(
         &'b mut self,
         grid: &Grid,
-        xi: &[(f64, f64, f64)]
+        xi: &[(f64, f64, f64)],
     ) -> GridConvCache<'a, 'b> {
         // TODO: try to avoid calling clear
         self.clear();
@@ -78,14 +78,15 @@ impl<'a> ConvolutionCache<'a> {
         for (result, scale, xi) in izip!(&mut self.mu2, scales, xi) {
             result.clear();
             result.extend(
-                grid
-                    .subgrids()
+                grid.subgrids()
                     .iter()
                     .filter(|subgrid| !subgrid.is_empty())
                     .flat_map(|subgrid| {
-                        scale.calc(&subgrid.node_values(), grid.kinematics()).into_owned()
+                        scale
+                            .calc(&subgrid.node_values(), grid.kinematics())
+                            .into_owned()
                     })
-                    .flat_map(|scale| xi.iter().map(move |&xi| xi * xi * scale))
+                    .flat_map(|scale| xi.iter().map(move |&xi| xi * xi * scale)),
             );
             result.sort_by(f64::total_cmp);
             result.dedup();
@@ -189,16 +190,17 @@ impl GridConvCache<'_, '_> {
         let indices_scales = &indices[0..x_start];
         let indices_x = &indices[x_start..];
 
-        let ix = self.ix
-            .iter()
-            .zip(indices_x)
-            .map(|(ix, &index)| ix[index]);
-        let idx_pid = self.perm
-            .iter()
-            .zip(pdg_ids)
-            .map(|(&(idx, cc), &pdg_id)| {
-                (idx, if cc { pids::charge_conjugate_pdg_pid(pdg_id) } else { pdg_id })
-            });
+        let ix = self.ix.iter().zip(indices_x).map(|(ix, &index)| ix[index]);
+        let idx_pid = self.perm.iter().zip(pdg_ids).map(|(&(idx, cc), &pdg_id)| {
+            (
+                idx,
+                if cc {
+                    pids::charge_conjugate_pdg_pid(pdg_id)
+                } else {
+                    pdg_id
+                },
+            )
+        });
 
         let fx_prod: f64 = ix
             .zip(idx_pid)
@@ -206,10 +208,14 @@ impl GridConvCache<'_, '_> {
                 let ConvCache1d { xfx, cache, conv } = &mut self.cache.caches[idx];
 
                 let (scale, scale_idx) = match conv.conv_type() {
-                    ConvType::UnpolPDF | ConvType::PolPDF =>
-                        (FAC_IDX, self.scales.fac.idx(indices_scales, &self.scale_dims)),
-                    ConvType::UnpolFF | ConvType::PolFF =>
-                        (FRG_IDX, self.scales.frg.idx(indices_scales, &self.scale_dims)),
+                    ConvType::UnpolPDF | ConvType::PolPDF => (
+                        FAC_IDX,
+                        self.scales.fac.idx(indices_scales, &self.scale_dims),
+                    ),
+                    ConvType::UnpolFF | ConvType::PolFF => (
+                        FRG_IDX,
+                        self.scales.frg.idx(indices_scales, &self.scale_dims),
+                    ),
                 };
 
                 let imu2 = self.imu2[scale][scale_idx];
@@ -247,7 +253,6 @@ impl GridConvCache<'_, '_> {
         (x1, x2, muf2)
     }
 
-
     /// Set the grids.
     pub fn set_grids(&mut self, grid: &Grid, subgrid: &SubgridEnum, xi: (f64, f64, f64)) {
         let node_values = subgrid.node_values();
@@ -257,18 +262,13 @@ impl GridConvCache<'_, '_> {
 
         for (result, values, scale, xi) in izip!(&mut self.imu2, &self.cache.mu2, scales, xi) {
             result.clear();
-            result.extend(
-                scale
-                    .calc(&node_values, kinematics)
+            result.extend(scale.calc(&node_values, kinematics).iter().map(|s| {
+                values
                     .iter()
-                    .map(|s| {
-                        values
-                            .iter()
-                            .position(|&value| subgrid::node_value_eq(value, xi * xi * s))
-                            // UNWRAP: if this fails, `new_grid_conv_cache` hasn't been called properly
-                            .unwrap_or_else(|| unreachable!())
-                    })
-            );
+                    .position(|&value| subgrid::node_value_eq(value, xi * xi * s))
+                    // UNWRAP: if this fails, `new_grid_conv_cache` hasn't been called properly
+                    .unwrap_or_else(|| unreachable!())
+            }));
         }
 
         self.ix = (0..grid.convolutions().len())
@@ -283,7 +283,8 @@ impl GridConvCache<'_, '_> {
                     .unwrap_or_else(|| unreachable!())
                     .iter()
                     .map(|&xd| {
-                        self.cache.x_grid
+                        self.cache
+                            .x_grid
                             .iter()
                             .position(|&x| subgrid::node_value_eq(xd, x))
                             .unwrap_or_else(|| unreachable!())
@@ -385,10 +386,22 @@ mod tests {
 
     #[test]
     fn conv_cc() {
-        assert_eq!(Conv::new(ConvType::UnpolPDF, 2212).cc(), Conv::new(ConvType::UnpolPDF, -2212));
-        assert_eq!(Conv::new(ConvType::PolPDF, 2212).cc(), Conv::new(ConvType::PolPDF, -2212));
-        assert_eq!(Conv::new(ConvType::UnpolFF, 2212).cc(), Conv::new(ConvType::UnpolFF, -2212));
-        assert_eq!(Conv::new(ConvType::PolFF, 2212).cc(), Conv::new(ConvType::PolFF, -2212));
+        assert_eq!(
+            Conv::new(ConvType::UnpolPDF, 2212).cc(),
+            Conv::new(ConvType::UnpolPDF, -2212)
+        );
+        assert_eq!(
+            Conv::new(ConvType::PolPDF, 2212).cc(),
+            Conv::new(ConvType::PolPDF, -2212)
+        );
+        assert_eq!(
+            Conv::new(ConvType::UnpolFF, 2212).cc(),
+            Conv::new(ConvType::UnpolFF, -2212)
+        );
+        assert_eq!(
+            Conv::new(ConvType::PolFF, 2212).cc(),
+            Conv::new(ConvType::PolFF, -2212)
+        );
     }
 
     #[test]
